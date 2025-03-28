@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Главная страница</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 250px;
+            height: 100%;
+            background-color: #343a40;
+            color: white;
+            padding-top: 20px;
+            z-index: 1050;
+        }
+        .sidebar a {
+            color: white;
+            padding: 15px;
+            text-decoration: none;
+            display: block;
+            border-bottom: 1px solid #444;
+        }
+        .sidebar a:hover {
+            background-color: #555;
+        }
+        .content {
+            margin-left: 250px;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2 class="text-center text-white">Меню</h2>
+        <a href="{% url 'yolov8:home' %}">Главная</a>
+        <a href="{% url 'yolov8:process_image' %}">История обработанных изображений</a>
+        <a href="{% url 'yolov8:defect_analysis' %}">Аналитика дефектов</a>
+        <a href="/admin">Админ-панель</a>
+        {% if user.is_authenticated %}
+            <a href="{% url 'yolov8:logout' %}">Выйти</a>
+        {% endif %}
+    </div>
+
+    <div class="content">
+        <nav class="navbar navbar-dark bg-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="{% url 'yolov8:home' %}">Defect Detection</a>
+                <span>Пользователь: {% if user.is_authenticated %}{{ user.username }}{% else %}Гость{% endif %}</span>
+            </div>
+        </nav>
+
+        <div class="container mt-5">
+            <h1 class="text-center">Система обнаружения дефектов 3D-печати</h1>
+            <p class="text-center">Добро пожаловать в систему анализа дефектов в 3D-печати.</p>
+
+            <div class="row mt-5">
+                <div class="col-md-6">
+                    {% if user.is_authenticated %}
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#orderModal">Оформить заказ</button>
+                    {% else %}
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#registerModal">Зарегистрироваться</button>
+                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#loginModal">Войти</button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% include 'YoloObjectDetectionAPI/register_modal.html' with register_form=register_form %}
+        {% include 'YoloObjectDetectionAPI/login_modal.html' with login_form=login_form %}
+        {% include 'YoloObjectDetectionAPI/order_modal.html' with form=form %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+    $(document).ready(function () {
+        $("#orderForm").submit(function (event) {
+            event.preventDefault();  // Отменяем стандартную отправку формы
+    
+            let formData = new FormData(this);
+    
+            $.ajax({
+                url: "{% url 'yolov8:order' %}",
+                type: "POST",
+                data: formData,
+                processData: false,
+                contentType: false,
+                headers: { "X-CSRFToken": $("input[name=csrfmiddlewaretoken]").val() },
+                success: function (data) {
+                    if (data.success) {
+                        $("#orderModal").modal("hide");  // Закрываем модальное окно заказа
+                        $("#successMessage").text(`Ваш заказ "${data.order_name}" успешно отправлен.`);
+                        $("#successModal").modal("show");  // Показываем окно успеха
+                        $("#orderForm")[0].reset();  // Очищаем форму
+                    }
+                },
+                error: function (xhr) {
+                    alert("Ошибка при отправке заказа. Проверьте данные.");
+                }
+            });
+        });
+    });
+    </script>
+    
+</body>
+</html>

@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            display: flex;
+        }
+
+        .orders-list {
+            width: 300px;
+            padding: 20px;
+        }
+
+        .order-details {
+            flex: 1;
+            padding: 20px;
+            border-left: 1px solid #ccc;
+        }
+
+        .order-link {
+            display: block;
+            padding: 10px;
+            text-decoration: none;
+            color: #333;
+            border-bottom: 1px solid #eee;
+        }
+
+        .order-link:hover {
+            background-color: #f5f5f5;
+        }
+
+        #camera-stream {
+            width: 100%;
+            max-width: 640px;
+            height: 480px;
+            border: 1px solid #ccc;
+        }
+
+        .capture-btn {
+            margin-top: 20px;
+        }
+
+        .camera-controls {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/yolov8">Defect Detection</a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/yolov8/">Главная страница</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="orders-list">
+            <h3>Список заказов</h3>
+            {% for order in orders %}
+            <a href="#" class="order-link" data-order-id="{{ order.id }}" data-order-name="{{ order.order_name }} "
+                data-order-desc="{{ order.description }}" data-order-material="{{ order.get_material_display }}"
+                data-order-status="{{ order.get_status_display }}" data-order-date="{{ order.created_at }}">
+                {{ order.order_name }} ({{ order.get_status_display }})
+            </a>
+            {% endfor %}
+        </div>
+
+        <div class="order-details" id="order-details">
+            <h3>Выберите заказ</h3>
+        </div>
+    </div>
+
+    <script>
+        let currentOrder = {};
+        let isCameraActive = false;
+        let cameraStream = null;
+
+        function initCamera(videoId) {
+            navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                .then(function (stream) {
+                    const video = document.getElementById(videoId);
+                    if (video) {
+                        video.srcObject = stream;
+                        cameraStream = stream;
+                    }
+                })
+                .catch(function (err) {
+                    console.error("Ошибка при доступе к камере:", err);
+                });
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                const tracks = cameraStream.getTracks();
+                tracks.forEach(track => track.stop());
+                cameraStream = null;
+            }
+        }
+
+        function captureImage(videoId) {
+            const video = document.getElementById(videoId);
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const imageData = canvas.toDataURL('image/jpeg');
+
+            fetch('/yolov8/upload/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({ image_data: imageData, order_id: currentOrder.id })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.detections) {
+                        alert('Обнаружены дефекты: ' + data.detections.length);
+                        const img = document.createElement('img');
+                        img.src = data.processed_image_url;
+                        img.classList.add("mt-3");
+                        img.style.maxWidth = "100%";
+                        document.getElementById('order-details').appendChild(img);
+                    } else {
+                        alert('Ошибка при обработке изображения.');
+                    }
+                })
+                .catch(err => {
+                    console.error('Ошибка при отправке изображения:', err);
+                });
+        }
+
+        function renderCameraButton() {
+            const cameraButton = document.getElementById('camera-toggle-button');
+            if (cameraButton) {
+                if (isCameraActive) {
+                    cameraButton.textContent = 'Выключить камеру';
+                } else {
+                    cameraButton.textContent = 'Включить камеру';
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const orderLinks = document.querySelectorAll('.order-link');
+            const orderDetails = document.getElementById('order-details');
+
+            function renderStatusButtons(status) {
+                let html = '';
+                if (status === 'В процессе') {
+                    html = `
+                        <div class="status-btns mt-3">
+                            <select id="status-select" class="form-select">
+                                <option value="Готов">Готов</option>
+                                <option value="Приостановлен">Приостановлен</option>
+                            </select>
+                            <button id="update-status-button" class="btn btn-primary mt-2">Обновить статус</button>
+                        </div>`;
+                } else if (status === 'Не начат') {
+                    html = `<div class="status-btns mt-3"><button id="start-order-button" class="btn btn-success">Начать</button></div>`;
+                } else if (status === 'Приостановлен') {
+                    html = `<div class="status-btns mt-3"><button id="resume-order-button" class="btn btn-warning">Продолжить</button></div>`;
+                } else if (status === 'Готов') {
+                    html = `<div class="status-btns mt-3"><button id="restart-order-button" class="btn btn-primary">Вернуть в статус "Начат"</button></div>`;
+                }
+
+                document.querySelector('#order-details .status-btns')?.remove();
+                document.getElementById('order-details').insertAdjacentHTML('beforeend', html);
+
+                // Кнопки
+                document.getElementById('update-status-button')?.addEventListener('click', () => {
+                    const newStatus = document.getElementById('status-select').value;
+                    updateOrderStatus(newStatus);
+                });
+
+                document.getElementById('start-order-button')?.addEventListener('click', () => {
+                    updateOrderStatus('В процессе');
+                });
+
+                document.getElementById('resume-order-button')?.addEventListener('click', () => {
+                    updateOrderStatus('В процессе');
+                });
+
+                document.getElementById('restart-order-button')?.addEventListener('click', () => {
+                    updateOrderStatus('Не начат');
+                });
+            }
+
+            function updateOrderStatus(newStatus) {
+                fetch('/yolov8/update_order_status/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify({
+                        order_id: currentOrder.id,
+                        status: newStatus
+                    })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            currentOrder.status = newStatus;
+                            document.getElementById('status-text').textContent = newStatus;
+                            const link = document.querySelector(`.order-link[data-order-id="${currentOrder.id}"]`);
+                            if (link) {
+                                link.setAttribute('data-order-status', newStatus);
+                                link.innerHTML = `${currentOrder.name} (${newStatus})`;
+                            }
+                            renderStatusButtons(newStatus);
+                        } else {
+                            alert('Ошибка обновления статуса: ' + data.message);
+                        }
+                    });
+            }
+
+            orderLinks.forEach(link => {
+                link.addEventListener('click', function (e) {
+                    e.preventDefault();
+
+                    if (isCameraActive) {
+                        alert('Сначала завершите текущий заказ!');
+                        return;
+                    }
+
+                    currentOrder = {
+                        id: this.getAttribute('data-order-id'),
+                        name: this.getAttribute('data-order-name'),
+                        desc: this.getAttribute('data-order-desc'),
+                        material: this.getAttribute('data-order-material'),
+                        status: this.getAttribute('data-order-status'),
+                        date: this.getAttribute('data-order-date')
+                    };
+
+                    orderDetails.innerHTML = `
+                        <h3>Детали заказа</h3>
+                        <p><strong>Название:</strong> ${currentOrder.name}</p>
+                        <p><strong>Описание:</strong> ${currentOrder.desc}</p>
+                        <p><strong>Материал:</strong> ${currentOrder.material}</p>
+                        <p><strong>Статус:</strong> <span id="status-text">${currentOrder.status}</span></p>
+                        <p><strong>Дата создания:</strong> ${currentOrder.date}</p>
+                        <div class="status-btns"></div>
+                        ${currentOrder.status === 'В процессе' ? `
+                            <div class="camera-section mt-4">
+                                <h4>Подключение к камере</h4>
+                                <video id="camera-stream" autoplay></video>
+                                <div class="camera-controls">
+                                    <button id="camera-toggle-button" class="btn btn-secondary mt-3">Включить камеру</button>
+                                    <button class="btn btn-primary mt-3" onclick="captureImage('camera-stream')">Сделать снимок</button>
+                                </div>
+                            </div>` : ''}`;
+
+                    renderStatusButtons(currentOrder.status);
+
+                    document.getElementById('camera-toggle-button').addEventListener('click', () => {
+                        if (isCameraActive) {
+                            const confirmStop = confirm('Заказ в процессе, точно хотите отменить?');
+                            if (confirmStop) {
+                                stopCamera();
+                                isCameraActive = false;
+                                renderCameraButton();
+                            }
+                        } else {
+                            initCamera('camera-stream');
+                            isCameraActive = true;
+                            renderCameraButton();
+                        }
+                    });
+                });
+            });
+        });
+    </script>
+</body>
+
+</html>

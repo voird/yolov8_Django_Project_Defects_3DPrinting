@@ -1,18 +1,18 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import login, logout
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from .forms import OrderForm, CustomUserCreationForm
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import ImageUpload, Detections
 from .serializers import ImageUploadSerializer
-from .detection_models.yolov8 import YOLOv8Detector  # Замените на ваш путь
+from .detection_models.yolov8 import YOLOv8Detector 
 import cv2
 from django.utils import timezone
 from django.core.files.base import ContentFile
-from django.http import HttpResponseServerError, HttpResponse  # Для обработки ошибок
+from django.http import HttpResponseServerError, HttpResponse  
 from django.db.models import Count, Avg
 from django.db.models.functions import TruncDate
 import logging
@@ -75,56 +75,120 @@ def upload_image(request):
     context = {'images': images}
     return render(request, 'process_image.html', context)
 
+import base64
+import cv2
+import numpy as np
+from io import BytesIO
+from PIL import Image
+from rest_framework.views import APIView
+import tempfile
+import uuid
+import os
+from django.core.files import File
+import traceback
+
 class UploadImageView(APIView):
-    detector = YOLOv8Detector('last.pt')  # Замените на ваш путь к модели
+    detector = YOLOv8Detector('last.pt')  # Путь к вашей YOLOv8 модели
 
     def post(self, request, format=None):
-        def draw_labels(image, detections):
-            for det in detections:
-                x_min, y_min, x_max, y_max = int(det['x_min']), int(det['x_max']), int(det['x_max']), int(det['y_max'])
-                label = det['label']
-                cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-                cv2.putText(image, label, (x_min, y_min - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
-            return image
+        image_data = request.data.get('image_data')
+        order_id = request.data.get('order_id')
+        if not image_data:
+            return JsonResponse({'error': 'No image data provided'}, status=400)
 
-        serializer = ImageUploadSerializer(data=request.data)
-        if serializer.is_valid():
-            image_upload = serializer.save()
+        try:
+            # Декодируем base64 изображение
+            image_data = image_data.split(',')[1]  # Удаляем "data:image/jpeg;base64,"
+            img_bytes = base64.b64decode(image_data)
+            img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
-            try:
-                detection_result = self.detector.run_detection(image_path=image_upload.image_file.path, confidence_threshold=image_upload.confidence_threshold)
+            # Генерируем имя файла
+            random_filename = str(uuid.uuid4())
+            media_dir = os.path.join('media', 'uploads')
+            os.makedirs(media_dir, exist_ok=True)
+
+            # Пути к оригинальному и обработанному изображениям
+            original_filename = f'{random_filename}_original.jpg'
+            processed_filename = f'{random_filename}_processed.jpg'
+
+            original_img_path = os.path.join(media_dir, original_filename)
+            processed_img_path = os.path.join(media_dir, processed_filename)
+
+            # Сохраняем оригинальное изображение
+            cv2.imwrite(original_img_path, img)
+
+            # Сохраняем в базу через File, но с относительным путем
+            with open(original_img_path, 'rb') as tmp_file:
+                django_file = File(tmp_file)
+                image_upload = ImageUpload(status=ImageUpload.STATUS_PENDING, confidence_threshold=0.5, order_id=order_id,)
+                image_upload.image_file.save(original_filename, django_file, save=True)
+
+            # Детекция YOLO
+            detection_result = self.detector.run_detection(image_path=original_img_path)
+
+            # Сохраняем результаты в базу
+            for det in detection_result:
+                Detections.objects.create(
+                    object_detection=image_upload,
+                    label=det['label'],
+                    confidence=det['confidence'],
+                    x_min=det['x_min'],
+                    x_max=det['x_max'],
+                    y_min=det['y_min'],
+                    y_max=det['y_max'],
+                )
+
+            # Рисуем рамки
+            for det in detection_result:
+                x_min = int(det['x_min'])
+                y_min = int(det['y_min'])
+                x_max = int(det['x_max'])
+                y_max = int(det['y_max'])
+
+                cv2.rectangle(img, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                cv2.putText(img, det['label'], (x_min, y_min - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            # Сохраняем обработанное изображение
+            cv2.imwrite(processed_img_path, img)
+
+            # Обновляем запись в базе, заменяя изображение и устанавливая статус
+            with open(processed_img_path, 'rb') as tmp_file:
+                django_file = File(tmp_file)
+                image_upload.image_file.save(processed_filename, django_file, save=True)
                 image_upload.status = ImageUpload.STATUS_COMPLETED
-
-                image_with_detections = cv2.imread(image_upload.image_file.path)
-                image_with_labels = draw_labels(image_with_detections, detection_result)
-
-                labeled_image = cv2.imencode('.jpg', image_with_labels)[1].tobytes()
-                image_upload.image_file.save(image_upload.image_file.name, ContentFile(labeled_image))
-
                 image_upload.processed_timestamp = timezone.now()
                 image_upload.save()
 
-                for detection in detection_result:
-                    Detections.objects.create(
-                        object_detection=image_upload,
-                        label=detection['label'],
-                        confidence=detection['confidence'],
-                        x_min=detection['x_min'],
-                        x_max=detection['x_max'],
-                        y_min=detection['y_min'],
-                        y_max=detection['y_max']
-                    )
+                        # Конвертируем обработанное изображение в base64
+            _, img_encoded = cv2.imencode('.jpg', img)
+            img_base64 = base64.b64encode(img_encoded).decode('utf-8')
 
-            except Exception as e:
-                image_upload.status = ImageUpload.STATUS_FAILED
-                image_upload.save()
-                logger.error(f"Ошибка при обработке изображения: {e}", exc_info=True)
-                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Приведение всех значений к сериализуемым типам Python
+            serialized_detections = []
+            for det in detection_result:
+                serialized_detections.append({
+                    'label': str(det['label']),
+                    'confidence': float(det['confidence']),
+                    'x_min': int(det['x_min']),
+                    'x_max': int(det['x_max']),
+                    'y_min': int(det['y_min']),
+                    'y_max': int(det['y_max']),
+                })
 
-            return Response({'detections': detection_result}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({
+                'processed_image_url': f"data:image/jpeg;base64,{img_base64}",
+                'detections': serialized_detections
+            })
 
-# modified to accept optional form data for initial rendering or error handling
+
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            return JsonResponse({'error': str(e), 'trace': traceback_str}, status=500)
+
+
 def index(request, form=None, register_form=None, login_form=None):
     total_images = ImageUpload.objects.all().count()
     images_processed = ImageUpload.objects.filter(status=ImageUpload.STATUS_COMPLETED).count()
@@ -186,3 +250,98 @@ def defect_analysis(request):
     except Exception as e:
         logger.error(f"Ошибка при анализе дефектов: {e}", exc_info=True)
         return HttpResponseServerError("Произошла ошибка при обработке данных.")
+
+from .models import Order
+from .forms import OrderForm
+from django.shortcuts import render, get_object_or_404
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import JsonResponse
+from .models import Order
+
+def is_admin(user):
+    return user.is_staff
+
+@login_required
+@user_passes_test(is_admin)
+def admin_panel(request):
+    if request.user.is_staff:
+        orders = Order.objects.all()
+        return render(request, 'admin_panel.html', {'orders': orders})
+    else:
+        return redirect('home')  # Перенаправление на главную для не-администраторов
+
+
+@login_required
+@user_passes_test(is_admin)
+def update_order_status(request, order_id, status):
+    try:
+        order = Order.objects.get(id=order_id)
+        order.status = status
+        order.save()
+        return JsonResponse({'success': True, 'status': order.get_status_display()})
+    except Order.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Order not found'})
+
+
+@login_required
+def client_orders(request):
+    orders = Order.objects.filter(user=request.user)
+    return render(request, 'client_orders.html', {'orders': orders})
+
+from django.shortcuts import render
+from django.http import JsonResponse
+from .models import Order
+
+from django.shortcuts import render
+from .models import Order
+
+def camera_page(request):
+    """Отображает страницу со списком заказов"""
+    orders = Order.objects.all().order_by('-created_at')  # Все заказы, новые сверху
+    return render(request, 'camera_page.html', {'orders': orders})
+
+def get_order_details(request, order_id):
+    """Возвращает детали заказа"""
+    try:
+        order = Order.objects.get(id=order_id)
+        return JsonResponse({
+            'order_name': order.order_name,
+            'description': order.description,
+            'material': order.material,
+            'status': order.get_status_display(),
+            'created_at': order.created_at.strftime('%Y-%m-%d %H:%M'),
+        })
+    except Order.DoesNotExist:
+        return JsonResponse({'error': 'Заказ не найден'}, status=404)
+
+from django.views.decorators.csrf import csrf_exempt
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import json
+
+
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+import json
+from django.shortcuts import get_object_or_404
+
+@csrf_exempt  # Отключает проверку CSRF (только для тестирования, в production нужно использовать CSRF токен!)
+def update_order_status(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            order_id = data.get('order_id')  # Используем get, чтобы избежать KeyError
+            new_status = data.get('status')  # Используем get, чтобы избежать KeyError
+
+            order = get_object_or_404(Order, id=order_id)  # !!!Укажите правильную модель!!!
+            order.status = new_status
+            order.save()
+
+            return JsonResponse({'success': True, 'status': order.get_status_display()})
+
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)})
+    else:
+        return JsonResponse({'success': False, 'message': 'Метод не разрешен'}, status=405)
+

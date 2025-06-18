@@ -1,0 +1,21 @@
+<html>
+<body>
+    <h1>Выбор камеры</h1>
+    
+    <form method="POST">
+        {% csrf_token %}
+        
+        <h2>Выберите камеру</h2>
+        {{ form.as_p }}
+        
+        <button type="submit">Выбрать камеру</button>
+    </form>
+    
+    <h2>Доступные камеры</h2>
+    <ul>
+        {% for camera in cameras %}
+            <li>{{ camera.camera_name }} - {{ camera.device.device_name }} ({{ camera.camera_ip }})</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>

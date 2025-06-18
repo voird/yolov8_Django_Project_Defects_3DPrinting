@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Обновить статус заказа</title>
+</head>
+<body>
+    <h1>Обновить статус заказа "{{ order.order_name }}"</h1>
+    <form method="POST">
+        {% csrf_token %}
+        <label for="status">Выберите новый статус:</label>
+        <select name="status" id="status">
+            <option value="not_started" {% if order.status == "not_started" %}selected{% endif %}>Не начат</option>
+            <option value="processing" {% if order.status == "processing" %}selected{% endif %}>В процессе</option>
+            <option value="completed" {% if order.status == "completed" %}selected{% endif %}>Готов</option>
+            <option value="paused" {% if order.status == "paused" %}selected{% endif %}>Приостановлен</option>
+        </select>
+        <button type="submit">Обновить статус</button>
+    </form>
+</body>
+</html>

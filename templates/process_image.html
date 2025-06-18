@@ -42,9 +42,6 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/yolov8/">Главная страница</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/admin">Админ-панель</a>
-                    </li>
                 </ul>
             </div>
         </div>
@@ -62,12 +59,13 @@
                         </div>
                     </div>
                 </div>
+            {% empty %}
+                <p>Нет изображений для отображения.</p>
             {% endfor %}
         </div>
     </div>
 
     <script>
-        // Функция для периодического обновления страницы каждые 5 минут
         setInterval(function() {
             location.reload();
         }, 300000);

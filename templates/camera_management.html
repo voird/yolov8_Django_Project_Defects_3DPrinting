@@ -1,0 +1,45 @@
+<!-- camera_management.html -->
+
+{% load static %}
+
+{% block content %}
+    <h1>Управление камерами</h1>
+
+    <h2>Выберите камеру:</h2>
+    <ul>
+        {% for camera in cameras %}
+            <li>
+                {{ camera.camera_name }} ({{ camera.device_id }})
+                {% if camera.is_streaming %}
+                    - Стримит ({{ camera.current_order }})
+                    <a href="{% url 'stop_stream' camera.id %}">Остановить стрим</a>
+                {% else %}
+                    - Не стримит
+                    <form method="post" action="{% url 'start_stream' camera.id 0 %}">
+                        {% csrf_token %}
+                        <input type="hidden" id="device-id" name="device_id" value="">
+                        <select name="order">
+                            {% for order in user.orders.all %}
+                                <option value="{{order.id}}">{{order.order_name}}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit">Начать стрим для заказа</button>
+                    </form>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+
+    <h2>Зарегистрировать новую камеру:</h2>
+    <a href="{% url 'register_camera' %}">Зарегистрировать камеру</a>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            function generateDeviceId() {
+                return navigator.userAgent; 
+            }
+            const deviceId = generateDeviceId();
+            document.querySelectorAll('input[name="device_id"]').forEach(input => input.value = deviceId);
+        });
+    </script>
+{% endblock %}

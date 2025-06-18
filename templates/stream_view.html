@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Просмотр трансляции {{ stream_id }}</title>
+</head>
+<body>
+    <h1>Трансляция №{{ stream_id }}</h1>
+    <video id="remote-video" autoplay playsinline></video>
+
+    <script>
+     const streamId = "{{ stream_id }}";
+const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${wsProtocol}://${location.host}/yolov8/ws/stream/${streamId}/`);
+
+let peerConnection = new RTCPeerConnection();
+
+peerConnection.ontrack = (event) => {
+    document.getElementById('remote-video').srcObject = event.streams[0];
+};
+
+ws.onmessage = async (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: 'answer', answer: answer }));
+    } else if (data.type === 'answer') {  
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    } else if (data.type === 'candidate') {
+        try{
+             await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+             console.error("Error adding ice candidate", e);
+        }
+    }
+};
+
+peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+        ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+    }
+};
+
+ws.onerror = (error) => {
+    console.error('WebSocket Error: ', error);
+};
+
+ws.onclose = () => {
+    console.log('WebSocket connection closed');
+
+    if (peerConnection) {
+        peerConnection.close();
+    }
+    if(document.getElementById('remote-video') && document.getElementById('remote-video').srcObject){
+        document.getElementById('remote-video').srcObject = null;
+    }
+
+};
+
+    </script>
+</body>
+</html>

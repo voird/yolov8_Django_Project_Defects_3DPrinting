@@ -1,0 +1,371 @@
+<!-- ОБНОВЛЁННЫЙ ШАБЛОН -->
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Админ-панель</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"/>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .container { display: flex; }
+    .orders-list { width: 300px; padding: 20px; }
+    .order-details { flex: 1; padding: 20px; border-left: 1px solid #ccc; }
+    .order-link {
+      display: block; padding: 10px; text-decoration: none;
+      color: #333; border-bottom: 1px solid #eee;
+    }
+    .order-link:hover { background-color: #f5f5f5; }
+    #camera-stream { width: 100%; max-width: 640px; height: 480px; border: 1px solid #ccc; }
+    .camera-controls { margin-top: 20px; }
+    .alert { display: none; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/yolov8">Defect Detection</a>
+      <div class="collapse navbar-collapse">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item"><a class="nav-link" href="/yolov8/">Главная страница</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="orders-list">
+      <h3>Список заказов</h3>
+      {% for order in orders %}
+      <a href="#" class="order-link" data-order-id="{{ order.id }}"
+         data-order-name="{{ order.order_name }}"
+         data-order-desc="{{ order.description }}"
+         data-order-material="{{ order.get_material_display }}"
+         data-order-status="{{ order.get_status_display }}"
+         data-order-date="{{ order.created_at }}">
+         {{ order.order_name }} ({{ order.get_status_display }})
+      </a>
+      {% endfor %}
+    </div>
+    <div class="order-details" id="order-details">
+      <h3>Выберите заказ</h3>
+    </div>
+  </div>
+
+  <div id="notification" class="alert alert-warning" role="alert"></div>
+
+  <script>
+    let currentOrder = {};
+    let isCameraActive = false;
+    let cameraStream = null;
+    let autoCaptureInterval;
+    let selectedCameraId = null;
+
+    async function loadCameraOptions() {
+      const res = await fetch('/yolov8/available_cameras/');
+      const cameras = await res.json();
+      const select = document.createElement('select');
+      select.id = 'camera-select';
+      select.className = 'form-select mt-2';
+      select.innerHTML = '<option value="">Выберите камеру</option>';
+      cameras.forEach(cam => {
+        const opt = document.createElement('option');
+        opt.value = cam.id;
+        opt.textContent = cam.name;
+        select.appendChild(opt);
+      });
+      const container = document.querySelector('.camera-controls');
+      if (!document.getElementById('camera-select')) {
+        container.insertBefore(select, container.firstChild);
+      }
+
+      select.addEventListener('change', () => {
+        selectedCameraId = select.value;
+      });
+    }
+
+    function initCamera(videoId, intervalMinutes) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then(stream => {
+          const video = document.getElementById(videoId);
+          if (video) {
+            video.srcObject = stream;
+            cameraStream = stream;
+            const intervalMilliseconds = intervalMinutes * 60 * 1000;
+            autoCaptureInterval = setInterval(() => captureImage(videoId), intervalMilliseconds);
+          }
+        })
+        .catch(err => {
+          showNotification("Ошибка при доступе к камере: " + err.message);
+        });
+    }
+
+    function stopCamera() {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+        clearInterval(autoCaptureInterval);
+      }
+    }
+
+    function captureImage(videoId) {
+      const video = document.getElementById(videoId);
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL('image/jpeg');
+
+      fetch('/yolov8/upload/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({ image_data: imageData, order_id: currentOrder.id })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.detections) {
+            showNotification('Обнаружены дефекты: ' + data.detections.length, 'success');
+            const img = document.createElement('img');
+            img.src = data.processed_image_url;
+            img.classList.add("mt-3");
+            img.style.maxWidth = "100%";
+            document.getElementById('order-details').appendChild(img);
+          } else {
+            showNotification('Ошибка при обработке изображения.', 'danger');
+          }
+        })
+        .catch(err => {
+          showNotification('Ошибка при отправке изображения: ' + err.message, 'danger');
+        });
+    }
+
+    function showNotification(message, type = 'warning') {
+      const notification = document.getElementById('notification');
+      notification.textContent = message;
+      notification.className = `alert alert-${type}`;
+      notification.style.display = 'block';
+      setTimeout(() => { notification.style.display = 'none'; }, 5000);
+    }
+
+    function renderCameraButton() {
+      const cameraButton = document.getElementById('camera-toggle-button');
+      if (cameraButton) {
+        cameraButton.textContent = isCameraActive ? 'Выключить камеру' : 'Включить камеру';
+      }
+    }
+
+    function renderCameraSection() {
+      const sectionHTML = `
+        <div class="camera-section mt-4">
+          <h4>Подключение к камере</h4>
+          <video id="camera-stream" autoplay></video>
+          <div class="camera-controls mt-3">
+            <button id="camera-toggle-button" class="btn btn-secondary">Включить камеру</button>
+            <button class="btn btn-primary mt-2" onclick="captureImage('camera-stream')">Сделать снимок</button>
+            <div class="mt-2">
+              <label for="interval-select">Интервал снятия снимков:</label>
+              <select id="interval-select" class="form-select mt-2">
+                <option value="10">10 минут</option>
+                <option value="30">30 минут</option>
+                <option value="50">50 минут</option>
+              </select>
+            </div>
+          </div>
+        </div>`;
+      document.getElementById('order-details').insertAdjacentHTML('beforeend', sectionHTML);
+      loadCameraOptions();
+      attachCameraButtonHandler();
+    }
+
+    function attachCameraButtonHandler() {
+      document.getElementById('camera-toggle-button')?.addEventListener('click', async () => {
+        if (!selectedCameraId) {
+          showNotification('Сначала выберите камеру!', 'warning');
+          return;
+        }
+        if (isCameraActive) {
+          if (confirm('Остановить камеру?')) {
+            stopCamera();
+            isCameraActive = false;
+            renderCameraButton();
+            await fetch('/yolov8/toggle_camera/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+              body: JSON.stringify({ camera_id: selectedCameraId, is_active: false })
+            });
+          }
+        } else {
+          const interval = document.getElementById('interval-select').value;
+          await fetch('/yolov8/toggle_camera/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            body: JSON.stringify({ camera_id: selectedCameraId, is_active: true })
+          });
+          initCamera('camera-stream', interval);
+          isCameraActive = true;
+          renderCameraButton();
+          startStream(currentOrder.id);
+          showNotification(`Ссылка для клиента: ${location.origin}/yolov8/watch/${currentOrder.id}`, 'success');
+        }
+      });
+    }
+
+    function renderStatusButtons(status) {
+      document.querySelector('#order-details .status-btns')?.remove();
+      let html = '';
+      if (status === 'В процессе') {
+        html = `
+          <div class="status-btns mt-3">
+            <select id="status-select" class="form-select">
+              <option value="Готов">Готов</option>
+              <option value="Приостановлен">Приостановлен</option>
+            </select>
+            <button id="update-status-button" class="btn btn-primary mt-2">Обновить статус</button>
+          </div>`;
+      } else if (status === 'Не начат') {
+        html = `<div class="status-btns mt-3"><button id="start-order-button" class="btn btn-success">Начать</button></div>`;
+      } else if (status === 'Приостановлен') {
+        html = `<div class="status-btns mt-3"><button id="resume-order-button" class="btn btn-warning">Продолжить</button></div>`;
+      } else if (status === 'Готов') {
+        html = `<div class="status-btns mt-3"><button id="restart-order-button" class="btn btn-primary">Вернуть в статус "Начат"</button></div>`;
+      }
+
+      document.getElementById('order-details').insertAdjacentHTML('beforeend', html);
+
+      document.getElementById('update-status-button')?.addEventListener('click', () => {
+        const newStatus = document.getElementById('status-select').value;
+        updateOrderStatus(newStatus);
+      });
+
+      document.getElementById('start-order-button')?.addEventListener('click', () => {
+        updateOrderStatus('В процессе');
+        renderCameraSection();
+      });
+
+      document.getElementById('resume-order-button')?.addEventListener('click', () => {
+        updateOrderStatus('В процессе');
+        renderCameraSection();
+      });
+
+      document.getElementById('restart-order-button')?.addEventListener('click', () => {
+        updateOrderStatus('Не начат');
+      });
+    }
+
+    function updateOrderStatus(newStatus) {
+      fetch('/yolov8/update_order_status/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: JSON.stringify({ order_id: currentOrder.id, status: newStatus })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            currentOrder.status = newStatus;
+            document.getElementById('status-text').textContent = newStatus;
+            const link = document.querySelector(`.order-link[data-order-id="${currentOrder.id}"]`);
+            if (link) {
+              link.setAttribute('data-order-status', newStatus);
+              link.innerHTML = `${currentOrder.name} (${newStatus})`;
+            }
+            renderStatusButtons(newStatus);
+          } else {
+            showNotification('Ошибка обновления статуса: ' + data.message, 'danger');
+          }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const orderLinks = document.querySelectorAll('.order-link');
+      const orderDetails = document.getElementById('order-details');
+
+      orderLinks.forEach(link => {
+        link.addEventListener('click', function (e) {
+          e.preventDefault();
+
+          if (isCameraActive) {
+            showNotification('Сначала завершите текущий заказ!', 'warning');
+            return;
+          }
+
+          currentOrder = {
+            id: this.getAttribute('data-order-id'),
+            name: this.getAttribute('data-order-name'),
+            desc: this.getAttribute('data-order-desc'),
+            material: this.getAttribute('data-order-material'),
+            status: this.getAttribute('data-order-status'),
+            date: this.getAttribute('data-order-date')
+          };
+
+          orderDetails.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h3>Детали заказа</h3>
+              <a href="/yolov8/download_model/${currentOrder.id}/" class="btn btn-outline-primary">Скачать модели</a>
+            </div>
+            <p><strong>Название:</strong> ${currentOrder.name}</p>
+            <p><strong>Описание:</strong> ${currentOrder.desc}</p>
+            <p><strong>Материал:</strong> ${currentOrder.material}</p>
+            <p><strong>Статус:</strong> <span id="status-text">${currentOrder.status}</span></p>
+            <p><strong>Дата создания:</strong> ${currentOrder.date}</p>`;
+
+          renderStatusButtons(currentOrder.status);
+
+          if (currentOrder.status === 'В процессе') {
+            renderCameraSection();
+          }
+        });
+      });
+    });
+
+    let peerConnection;
+    let ws;
+    async function startStream(streamId) {
+      const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${wsProtocol}://${location.host}/ws/stream/${streamId}/`);
+
+      ws.onopen = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          document.getElementById('camera-stream').srcObject = stream;
+          peerConnection = new RTCPeerConnection();
+          stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+          peerConnection.onicecandidate = event => {
+            if (event.candidate && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+            }
+          };
+
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: 'offer', offer: offer }));
+
+        } catch (error) {
+          console.error('Ошибка WebRTC:', error);
+          showNotification(`Ошибка при доступе к камере: ${error.message}`, 'danger');
+          ws.close();
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+        showNotification('WebSocket Error: ' + error.message, 'danger');
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket закрыт');
+        if (peerConnection) peerConnection.close();
+        if (document.getElementById('camera-stream')?.srcObject) {
+          document.getElementById('camera-stream').srcObject.getTracks().forEach(t => t.stop());
+          document.getElementById('camera-stream').srcObject = null;
+        }
+      };
+    }
+  </script>
+</body>
+</html>

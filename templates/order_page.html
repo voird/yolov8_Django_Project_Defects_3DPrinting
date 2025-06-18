@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мои заказы</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Список моих заказов</h1>
+    <ul id="order-list">
+        {% for order in orders %}
+            <li>
+                <button class="order-btn" data-order-id="{{ order.id }}">{{ order.order_name }}</button>
+            </li>
+        {% empty %}
+            <li>У вас нет заказов.</li>
+        {% endfor %}
+    </ul>
+
+    <div id="order-details" style="display:none;">
+        <h2>Фотографии</h2>
+        <ul id="image-list"></ul>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            $('.order-btn').on('click', function() {
+                var orderId = $(this).data('order-id');
+                $('#order-details').show();
+                $('#image-list').empty();
+
+                $.ajax({
+                    url: 'yolov8/get-images/' + orderId + '/',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.images.length > 0) {
+                            response.images.forEach(function(image) {
+                                var imageElement = `<li>
+                                    <img src="${image.image_url}" alt="Фото" width="200">
+                                    <p>Загружено: ${image.upload_timestamp}</p>
+                                    ${image.processed_timestamp ? '<p>Обработано: ' + image.processed_timestamp + '</p>' : ''}
+                                    <p>Статус: ${image.status}</p>
+                                </li>`;
+                                $('#image-list').append(imageElement);
+                            });
+                        } else {
+                            $('#image-list').append('<li>Нет фотографий для этого заказа.</li>');
+                        }
+                    },
+                    error: function() {
+                        alert('Произошла ошибка при загрузке изображений.');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

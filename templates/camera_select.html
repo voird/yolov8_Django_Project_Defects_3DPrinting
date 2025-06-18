@@ -1,0 +1,5 @@
+<form action="{% url 'yolov8:add_camera' %}" method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn-success">Зарегистрировать камеру</button>
+</form>

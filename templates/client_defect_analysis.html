@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Анализ дефектов (Клиент)</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f8f9fa; font-family: Arial, sans-serif; }
+        h1 { text-align: center; margin: 20px 0; color: #333; }
+        .image-card img { max-width: 100%; border-radius: 10px; }
+        .navbar { margin-bottom: 20px; }
+        .sidebar { width: 25%; min-width: 250px; background-color: #fff; border-right: 1px solid #ddd; padding: 20px; }
+        .main-content { flex: 1; padding: 20px; }
+        .summary-panel { margin-top: 20px; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        .chart-container { width: 100%; max-width: 500px; margin: 0 auto; }
+        .images img { max-width: 100px; max-height: 100px; object-fit: cover; }
+        .panel-title { font-weight: bold; margin-top: 20px; margin-bottom: 10px; color: #333; }
+        .images { display: flex; flex-wrap: wrap; gap: 10px; }
+        #recommendations { padding: 15px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 8px; margin-top: 20px; }
+        #recommendations h5 { color: #856404; font-size: 1.2em; }
+        #summaryList { list-style-type: none; padding-left: 0; }
+        .sidebar a { display: block; padding: 10px 15px; text-decoration: none; color: #333; border-radius: 5px; transition: background-color 0.3s; margin-bottom: 10px; }
+        .sidebar a:hover { background-color: #f0f0f0; }
+        .recommendation-list { margin-top: 10px; }
+        .recommendation-list li { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/yolov8">Defect Detection</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item"><a class="nav-link" href="/yolov8/">Главная страница</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<h1>Анализ дефектов (Клиент: {{ client.username }})</h1>
+
+<div class="d-flex">
+    <!-- Левая панель -->
+    <div class="sidebar">
+        <div>
+            <div class="panel-title">Заказы</div>
+            <ul id="orderList" class="list-unstyled">
+                {% for item in orders_with_translated_status %}
+                <li>
+                    <a href="#" onclick="selectOrder({{ item.order.id }}); return false;">
+                        {{ item.order.order_name }} ({{ item.translated_status }})
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+            
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div id="imageSection" class="d-none">
+            <h4>Изображения дефектов</h4>
+            <div class="images" id="imageList"></div>
+        </div>
+
+        <div id="summarySection" class="d-none summary-panel">
+            <h4>Сводка по заказу</h4>
+            <ul id="summaryList" class="mb-4"></ul>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="chart-container"><canvas id="defectChart" height="200"></canvas></div>
+                </div>
+                <div class="col-md-6">
+                    <div class="chart-container"><canvas id="confidenceChart" height="200"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="buttonsSection" class="d-none mt-3">
+            <button class="btn btn-primary me-2" id="downloadSummaryBtn">Скачать сводку (PDF)</button>
+            <button class="btn btn-secondary" id="downloadImagesBtn">Скачать изображения (ZIP)</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentOrderId = null;
+
+    function selectOrder(orderId) {
+    currentOrderId = orderId;
+    
+
+    document.getElementById('imageList').innerHTML = '';  
+    document.getElementById('summaryList').innerHTML = '';  
+    document.getElementById('recommendations')?.remove(); 
+
+    document.getElementById('summarySection').classList.add('d-none');
+    document.getElementById('imageSection').classList.add('d-none');
+    document.getElementById('buttonsSection').classList.add('d-none');
+
+    loadImages(orderId);
+    loadSummary(orderId);
+}
+
+function loadImages(orderId) {
+    fetch(`/yolov8/get_images/${orderId}/`)
+        .then(response => response.json())
+        .then(data => {
+            const imageList = document.getElementById('imageList');
+            if (data.length === 0) {
+                imageList.innerHTML = '<p>Изображения не найдены.</p>';
+            } else {
+                data.forEach(image => {
+                    const img = document.createElement('img');
+                    img.src = image.image_file;
+                    img.alt = image.status;
+                    imageList.appendChild(img);
+                });
+            }
+        });
+}
+
+function loadSummary(orderId) {
+    fetch(`/yolov8/get_summary/${orderId}/`)
+        .then(response => response.json())
+        .then(data => {
+            const summaryList = document.getElementById('summaryList');
+            summaryList.innerHTML = '';
+
+            if (data.status === "Не начато") {
+                document.getElementById('summarySection').classList.add('d-none');
+                document.getElementById('imageSection').classList.add('d-none');
+                document.getElementById('buttonsSection').classList.add('d-none');
+                document.getElementById('defectChart').parentElement.classList.add('d-none');
+                document.getElementById('confidenceChart').parentElement.classList.add('d-none');
+                return; 
+            }
+
+            document.getElementById('summarySection').classList.remove('d-none');
+            document.getElementById('imageSection').classList.remove('d-none');
+            document.getElementById('buttonsSection').classList.remove('d-none');
+            document.getElementById('defectChart').parentElement.classList.remove('d-none');
+            document.getElementById('confidenceChart').parentElement.classList.remove('d-none');
+
+            const defectIndex = data.chartData.labels.indexOf("Defect");
+            const noRowIndex = data.chartData.labels.indexOf("NoRow");
+
+            const defectCount = defectIndex !== -1 ? data.chartData.counts[defectIndex] : 0;
+            const defectConfidence = defectIndex !== -1 ? data.chartData.confidences[defectIndex] : 0;
+
+            const noRowCount = noRowIndex !== -1 ? data.chartData.counts[noRowIndex] : 0;
+            const noRowConfidence = noRowIndex !== -1 ? data.chartData.confidences[noRowIndex] : 0;
+
+            const recommendationsBlock = document.createElement('div');
+            recommendationsBlock.id = 'recommendations';
+
+            if (defectCount === 0 || defectConfidence < 60) {
+                summaryList.innerHTML += `<li>Дефекты не обнаружены.</li>`;
+            } else {
+                summaryList.innerHTML += `<li>Дефекты были найдены.</li>`;
+                const defectAdvice = document.createElement('div');
+                defectAdvice.innerHTML = `
+                    <h5>Рекомендации по устранению дефектов</h5>
+                    <ul class="recommendation-list">
+                        <li>Проверьте, надёжно ли закреплены все подвижные элементы внутри принтера.</li>
+                        <li>Используйте качественные материалы от проверенных производителей.</li>
+                        <li>Очистите оптические элементы принтера (экран и линзы) от возможных загрязнений.</li>
+                        <li>Увеличьте время экспозиции первого слоя, чтобы улучшить адгезию модели.</li>
+                    </ul>
+                `;
+                recommendationsBlock.appendChild(defectAdvice);
+            }
+
+            if (noRowCount === 0 || noRowConfidence < 60) {
+                summaryList.innerHTML += `<li>Платформа принтера была настроена правильно.</li>`;
+            } else {
+                summaryList.innerHTML += `<li>Принтер был неправильно настроен. Модель могла быть искажена.</li>`;
+                const noRowAdvice = document.createElement('div');
+                noRowAdvice.innerHTML = `
+                    <h5>Рекомендации по настройке платформы</h5>
+                    <ul class="recommendation-list">
+                        <li>Убедитесь в правильной калибровке платформы перед запуском печати.</li>
+                        <li>Проверьте крепление платформы — оно должно быть жёстким и без люфта.</li>
+                        <li>Не перегружайте платформу слишком крупными моделями без поддержки.</li>
+                        <li>Очищайте поверхность и экран принтера перед каждой печатью.</li>
+                    </ul>
+                `;
+                recommendationsBlock.appendChild(noRowAdvice);
+            }
+
+            const oldRecommendations = document.getElementById('recommendations');
+            if (oldRecommendations) oldRecommendations.remove();
+            summaryList.parentNode.appendChild(recommendationsBlock);
+
+            document.getElementById('downloadSummaryBtn').onclick = () => {
+                window.location.href = `/yolov8/download_summary/${orderId}/`;
+            };
+            document.getElementById('downloadImagesBtn').onclick = () => {
+                window.location.href = `/yolov8/download_images/${orderId}/`;
+            };
+
+            renderCharts(data.chartData);
+        });
+}
+
+
+
+function renderCharts(chartData) {
+
+    const ctx1 = document.getElementById('defectChart').getContext('2d');
+    const ctx2 = document.getElementById('confidenceChart').getContext('2d');
+
+    if (window.defectChartInstance) {
+        window.defectChartInstance.destroy();
+    }
+    if (window.confidenceChartInstance) {
+        window.confidenceChartInstance.destroy();
+    }
+
+    window.defectChartInstance = new Chart(ctx1, {
+        type: 'bar',
+        data: {
+            labels: chartData.labels,
+            datasets: [{
+                label: 'Количество дефектов',
+                data: chartData.counts,
+                backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                borderColor: 'rgb(255, 99, 132)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: 'Дефекты по категориям' }
+            }
+        }
+    });
+
+    window.confidenceChartInstance = new Chart(ctx2, {
+        type: 'bar',
+        data: {
+            labels: chartData.labels,
+            datasets: [{
+                label: 'Уверенность (%)',
+                data: chartData.confidences,
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                borderColor: 'rgb(54, 162, 235)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: 'Уверенность в дефектах (%)' }
+            }
+        }
+    });
+}
+
+</script>
+</body>
+</html>
